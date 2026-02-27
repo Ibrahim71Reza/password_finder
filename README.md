@@ -11,6 +11,6 @@ curl https://sh.rustup.rs -sSf | sh
 source $HOME/.cargo/env
 ```
 ```bash
-cargo install --git <YOUR_REPO_URL> --locked
+cargo install --git https://github.com/Ibrahim71Reza/password_finder.git --locked
 pwfind --help
 ```
