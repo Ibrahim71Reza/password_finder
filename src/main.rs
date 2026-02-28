@@ -10,18 +10,23 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
+/// World's fastest password and secret finder for huge wordlists
 #[derive(Parser, Debug)]
 #[command(name = "pwfind", version = "1.0.0", about = "World's fastest password and secret finder", long_about = None)]
 struct Cli {
+    /// The directory or file to scan (e.g., /usr/share/wordlists)
     #[arg(short, long)]
     path: String,
 
+    /// The password, word, or Regex pattern to find
     #[arg(short = 'w', long)]
     word: Option<String>,
 
+    /// Built-in hacker presets: jwt, aws, email, ip
     #[arg(long)]
     preset: Option<String>,
 
+    /// Enable Regex mode (default is exact literal match)
     #[arg(short, long, default_value_t = false)]
     regex: bool,
 
@@ -29,11 +34,17 @@ struct Cli {
     #[arg(short = 'x', long, default_value_t = false)]
     extract: bool,
 
+    /// File extensions to search (comma separated)
     #[arg(short, long, value_delimiter = ',', default_value = "txt,json,md,csv,gz")]
     ext: Vec<String>,
 
+    /// Save the full detailed output log to a text file
     #[arg(short, long)]
     output: Option<String>,
+
+    /// Save ONLY the matched words to a file (creates a custom wordlist)
+    #[arg(long)]
+    out_wordlist: Option<String>,
 }
 
 struct MatchResult {
@@ -60,12 +71,8 @@ fn search_file(path: &PathBuf, search_word: &str, compiled_regex: Option<&Regex>
 
     for (line_number, line_result) in buf_reader.lines().enumerate() {
         if let Ok(line) = line_result {
-            // ---------------------------------------------------------
-            // NEW: Extraction Logic!
-            // ---------------------------------------------------------
             if let Some(re) = compiled_regex {
                 if extract {
-                    // Extract exact matches only!
                     for mat in re.find_iter(&line) {
                         let _ = tx.send(MatchResult {
                             file_path: path.display().to_string(),
@@ -81,7 +88,6 @@ fn search_file(path: &PathBuf, search_word: &str, compiled_regex: Option<&Regex>
                     });
                 }
             } else {
-                // Exact Word Match (Non-Regex)
                 if line.contains(search_word) {
                     let content = if extract { search_word.to_string() } else { line.clone() };
                     let _ = tx.send(MatchResult {
@@ -134,8 +140,14 @@ fn main() {
     }
     
     if let Some(ref out) = args.output {
-        println!("{} {}", "💾 Saving to:".cyan(), out.yellow());
+        println!("{} {}", "💾 Full Log Saved to:".cyan(), out.yellow());
     }
+    
+    // NEW: Notify user that a custom wordlist is being generated
+    if let Some(ref wl) = args.out_wordlist {
+        println!("{} {}", "📝 Wordlist Generating to:".cyan(), wl.yellow());
+    }
+    
     println!("{}", "=========================================".blue().bold());
 
     let regex_pattern = if is_regex_mode {
@@ -179,14 +191,23 @@ fn main() {
     let (tx, rx) = mpsc::channel::<MatchResult>();
     let out_file_path = args.output.clone();
     
+    // NEW: Get the path for the custom wordlist file
+    let wordlist_file_path = args.out_wordlist.clone();
+    
     let receiver_thread = thread::spawn(move || {
         let mut out_file = match out_file_path {
             Some(path) => match File::create(&path) {
                 Ok(f) => Some(f),
-                Err(e) => {
-                    println!("{} Failed to create output file: {}", "[-]".red().bold(), e);
-                    None
-                }
+                Err(_) => None
+            },
+            None => None,
+        };
+
+        // NEW: Try to open the custom wordlist file
+        let mut wordlist_file = match wordlist_file_path {
+            Some(path) => match File::create(&path) {
+                Ok(f) => Some(f),
+                Err(_) => None
             },
             None => None,
         };
@@ -206,16 +227,23 @@ fn main() {
                 result.content.red().bold()
             );
 
+            // Save the detailed log if requested
             if let Some(ref mut file) = out_file {
                 let clean_text = format!("[+] {} (Line {}) {}\n", result.file_path, result.line_num, result.content);
                 let _ = file.write_all(clean_text.as_bytes());
+            }
+            
+            // NEW: Save ONLY the exact word to the wordlist if requested
+            if let Some(ref mut wl_file) = wordlist_file {
+                let pure_text = format!("{}\n", result.content);
+                let _ = wl_file.write_all(pure_text.as_bytes());
             }
         }
         
         match_count 
     });
 
-    let args_extract = args.extract; // Copy bool for the threads
+    let args_extract = args.extract;
 
     target_files.par_iter().for_each(|file| {
         let thread_tx = tx.clone();
